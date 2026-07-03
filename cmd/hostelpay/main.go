@@ -15,6 +15,7 @@ import (
 	"hostelpay/internal/repository"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 // calculateRentKobo applies the pricing rules entirely in integer kobo
@@ -117,7 +118,12 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository) http.HandlerF
 }
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found, relying on system environment variables")
+	}
+
 	dbURL := os.Getenv("DATABASE_URL")
+
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL environment variable is not set")
 	}
