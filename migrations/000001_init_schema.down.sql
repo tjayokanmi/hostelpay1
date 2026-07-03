@@ -1,5 +1,5 @@
-DROP TRIGGER IF EXISTS trg_payments_updated_at ON payments;
-DROP FUNCTION IF EXISTS set_updated_at();
-
+-- Down Migration: Completely removes the ledger tracking system safely
+DROP INDEX IF EXISTS idx_payments_student;
 DROP TABLE IF EXISTS payments;
 
+-- Note: pgcrypto is deliberately left intact for future scale
