@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"hostelpay/internal/models"
+	"hostelpay/internal/nomba"
 	"hostelpay/internal/repository"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 )
 
 // calculateRentKobo applies the pricing rules entirely in integer kobo
@@ -57,7 +57,7 @@ func checkoutFormHandler(tmpl *template.Template) http.HandlerFunc {
 	}
 }
 
-func checkoutInitializeHandler(repo *repository.PaymentRepository) http.HandlerFunc {
+func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *nomba.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			log.Printf("form parse error: %v", err)
@@ -71,7 +71,7 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository) http.HandlerF
 		room := r.FormValue("room_number")
 		occupancy := r.FormValue("occupancy_type")
 
-		if studentID == "" || block == "" || floor == "" || room == "" {
+		if studentID == "" || block == "" || floor == "" || room == "" || occupancy == "" {
 			http.Error(w, "All fields are required", http.StatusBadRequest)
 			return
 		}
@@ -90,12 +90,10 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository) http.HandlerF
 			return
 		}
 
-		// Calculate exact Naira layout as a safe string
 		nairaPart := amountKobo / 100
 		koboPart := amountKobo % 100
 		safeNumericStr := fmt.Sprintf("%d.%02d", nairaPart, koboPart)
 
-		// Map to the Go struct ensuring the StudentIdentifier is captured
 		payment := models.Payment{
 			OrderReference:    orderReference,
 			StudentIdentifier: studentID,
@@ -106,42 +104,67 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository) http.HandlerF
 			AmountPaid:        safeNumericStr,
 		}
 
+		// 1. Save to Database
 		if err := repo.CreatePayment(r.Context(), payment); err != nil {
 			log.Printf("database insert error: %v", err)
 			http.Error(w, "Failed to save payment record", http.StatusInternalServerError)
 			return
 		}
-
 		log.Printf("✅ DB SAVED | Ref: %s | Amount: ₦%s | Student: %s", orderReference, safeNumericStr, studentID)
-		fmt.Fprintf(w, "Success! Record saved to database. Ref: %s", orderReference)
+
+		// 2. Fire the Request to Nomba
+		req := nomba.CheckoutRequest{
+			OrderReference: payment.OrderReference,
+			CustomerID:     payment.StudentIdentifier,
+			CustomerEmail:  "student@hackathon.com",
+			AmountNaira:    payment.AmountPaid,
+			CallbackURL:    "http://localhost:8080/checkout/callback",
+		}
+
+		result, err := nombaClient.GenerateCheckoutLink(r.Context(), req)
+		if err != nil {
+			log.Printf("nomba checkout error: %v", err)
+			http.Error(w, "Payment gateway unavailable", http.StatusBadGateway)
+			return
+		}
+		log.Printf("✅ NOMBA LINK GENERATED | Redirecting to: %s", result.CheckoutLink)
+
+		// 3. Redirect the browser to the Nomba payment screen
+		http.Redirect(w, r, result.CheckoutLink, http.StatusFound)
 	}
 }
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, relying on system environment variables")
-	}
-
 	dbURL := os.Getenv("DATABASE_URL")
-
 	if dbURL == "" {
 		log.Fatal("DATABASE_URL environment variable is not set")
 	}
 
 	dbPool, err := pgxpool.New(context.Background(), dbURL)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Fatalf("Failed to create connection pool: %v", err)
 	}
 	defer dbPool.Close()
 
+	if err := dbPool.Ping(context.Background()); err != nil {
+		log.Fatalf("Database ping failed: %v", err)
+	}
 	log.Println("✅ Successfully connected to PostgreSQL")
 
 	repo := repository.NewPaymentRepository(dbPool)
+
+	nombaClient := nomba.NewClient(
+		os.Getenv("NOMBA_CLIENT_ID"),
+		os.Getenv("NOMBA_CLIENT_SECRET"),
+		os.Getenv("NOMBA_PARENT_ACCOUNT_ID"),
+		os.Getenv("NOMBA_SUB_ACCOUNT_ID"),
+	)
+
 	tmpl := template.Must(template.ParseFiles("templates/checkout.html"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", checkoutFormHandler(tmpl))
-	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo))
+	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo, nombaClient))
 
 	port := os.Getenv("PORT")
 	if port == "" {
