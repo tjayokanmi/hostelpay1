@@ -41,3 +41,17 @@ func (r *PaymentRepository) CreatePayment(ctx context.Context, p models.Payment)
 	}
 	return nil
 }
+
+// Add this to internal/repository/payment_repository.go
+
+func (r *PaymentRepository) UpdatePaymentStatusByOrderRef(ctx context.Context, orderReference, status, providerReference string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE payments
+		SET payment_status = $1, provider_reference = $2, updated_at = CURRENT_TIMESTAMP
+		WHERE order_reference = $3
+	`, status, providerReference, orderReference)
+	if err != nil {
+		return fmt.Errorf("failed to update payment status: %w", err)
+	}
+	return nil
+}

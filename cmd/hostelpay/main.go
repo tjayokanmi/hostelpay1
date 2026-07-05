@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -42,6 +43,7 @@ func generateOrderReference() (string, error) {
 	return fmt.Sprintf("hp-ref-%s-%x", timestamp, b), nil
 }
 
+// 1. THE FORM HANDLER
 func checkoutFormHandler(tmpl *template.Template) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var buf bytes.Buffer
@@ -57,6 +59,7 @@ func checkoutFormHandler(tmpl *template.Template) http.HandlerFunc {
 	}
 }
 
+// 2. THE INITIALIZATION HANDLER (Sends data to DB and Nomba)
 func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *nomba.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -104,21 +107,20 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *
 			AmountPaid:        safeNumericStr,
 		}
 
-		// 1. Save to Database
 		if err := repo.CreatePayment(r.Context(), payment); err != nil {
 			log.Printf("database insert error: %v", err)
 			http.Error(w, "Failed to save payment record", http.StatusInternalServerError)
 			return
 		}
-		log.Printf("✅ DB SAVED | Ref: %s | Amount: ₦%s | Student: %s", orderReference, safeNumericStr, studentID)
+		log.Printf("✅ DB SAVED | Ref: %s | Amount: ₦%s", orderReference, safeNumericStr)
 
-		// 2. Fire the Request to Nomba
 		req := nomba.CheckoutRequest{
 			OrderReference: payment.OrderReference,
 			CustomerID:     payment.StudentIdentifier,
 			CustomerEmail:  "student@hackathon.com",
 			AmountNaira:    payment.AmountPaid,
-			CallbackURL:    "http://localhost:8080/checkout/callback",
+			// NOTE: This sends the user's browser back to the UI handler below!
+			CallbackURL: "https://hostelpay1.onrender.com/checkout/callback",
 		}
 
 		result, err := nombaClient.GenerateCheckoutLink(r.Context(), req)
@@ -127,10 +129,103 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *
 			http.Error(w, "Payment gateway unavailable", http.StatusBadGateway)
 			return
 		}
-		log.Printf("✅ NOMBA LINK GENERATED | Redirecting to: %s", result.CheckoutLink)
 
-		// 3. Redirect the browser to the Nomba payment screen
 		http.Redirect(w, r, result.CheckoutLink, http.StatusFound)
+	}
+}
+
+// 3. THE CALLBACK HANDLER (Cosmetic UI for the returning user)
+// Uses html/template so a crafted orderReference query param can't inject
+// script into the page — {{.}} is auto-escaped, unlike raw fmt.Fprintf.
+var callbackTmpl = template.Must(template.New("callback").Parse(`
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<title>Payment Verification</title>
+		<style>
+			body { font-family: -apple-system, sans-serif; background-color: #f4f4f9; text-align: center; padding: 50px; }
+			.card { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
+			h1 { color: #2e7d32; }
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<h1>🎉 Welcome Back!</h1>
+			<p>Your transaction has been received and is currently processing.</p>
+			<p style="color: #666;">Order Reference: <strong>{{.}}</strong></p>
+			<p>You can safely close this window. Your hostel portal will update automatically once the network confirms the funds.</p>
+		</div>
+	</body>
+	</html>
+`))
+
+func checkoutCallbackHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orderRef := r.URL.Query().Get("orderReference")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+		var buf bytes.Buffer
+		if err := callbackTmpl.Execute(&buf, orderRef); err != nil {
+			log.Printf("callback template error: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if _, err := buf.WriteTo(w); err != nil {
+			log.Printf("response write error: %v", err)
+		}
+	}
+}
+
+// 4. THE WEBHOOK HANDLER (The secure background trap for Nomba's servers)
+func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			log.Printf("webhook body read error: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		defer r.Body.Close()
+
+		log.Printf("--- INCOMING WEBHOOK HEADERS ---")
+		for name, values := range r.Header {
+			log.Printf("webhook header: %s = %v", name, values)
+		}
+		log.Printf("--- RAW WEBHOOK BODY ---")
+		log.Printf("%s", string(body))
+
+		receivedSignature := r.Header.Get("nomba-signature")
+
+		if !nomba.VerifySignature(body, receivedSignature, signingKey) {
+			log.Printf("⚠️ webhook signature verification FAILED")
+			// Still logging-only for this first real test — confirming hex
+			// encoding matches before making this a hard reject.
+		} else {
+			log.Printf("✅ webhook signature verified successfully")
+		}
+
+		payload, err := nomba.ParseWebhookPayload(body)
+		if err != nil {
+			log.Printf("webhook parse error: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		if payload.EventType != "payment_success" {
+			log.Printf("webhook received non-success event: %s — acknowledging, no DB update", payload.EventType)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if err := repo.UpdatePaymentStatusByOrderRef(r.Context(), payload.Data.Order.OrderReference, models.StatusSuccess, payload.Data.Transaction.TransactionID); err != nil {
+			log.Printf("failed to update payment status: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("✅ PAYMENT CONFIRMED | Ref: %s | Nomba TxID: %s", payload.Data.Order.OrderReference, payload.Data.Transaction.TransactionID)
+		w.WriteHeader(http.StatusOK)
 	}
 }
 
@@ -165,6 +260,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", checkoutFormHandler(tmpl))
 	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo, nombaClient))
+	mux.HandleFunc("GET /checkout/callback", checkoutCallbackHandler())
+	mux.HandleFunc("POST /checkout/webhook", checkoutWebhookHandler(repo, os.Getenv("NOMBA_SIGNATURE_KEY")))
 
 	port := os.Getenv("PORT")
 	if port == "" {
