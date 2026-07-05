@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HostelPay | Manager Dashboard</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; background-color: #f4f4f9; padding: 20px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; margin-top: 0; }
+        .filter-bar { background: #ecf0f1; padding: 15px; border-radius: 6px; margin-bottom: 20px; display: flex; gap: 15px; align-items: flex-end; }
+        .filter-group { display: flex; flex-direction: column; }
+        label { font-size: 0.85rem; font-weight: 600; margin-bottom: 5px; color: #555; }
+        input, select, button { padding: 8px 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
+        button { background: #2980b9; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background: #2471a3; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
+        th { background-color: #f8f9fa; font-weight: 600; color: #444; }
+        tr:hover { background-color: #f1f4f8; }
+        .status-SUCCESS { color: #27ae60; font-weight: bold; }
+        .status-PENDING { color: #f39c12; font-weight: bold; }
+        .empty-state { text-align: center; padding: 40px; color: #7f8c8d; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Manager Dashboard</h1>
+
+        <form class="filter-bar" method="GET" action="/manager/dashboard">
+            <div class="filter-group">
+                <label for="block">Filter by Block</label>
+                <select id="block" name="block">
+                    <option value="">All Blocks</option>
+                    <option value="white house" {{if eq .SelectedBlock "white house"}}selected{{end}}>White House</option>
+                    <option value="green house" {{if eq .SelectedBlock "green house"}}selected{{end}}>Green House</option>
+                    <option value="blue house" {{if eq .SelectedBlock "blue house"}}selected{{end}}>Blue House</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="floor_level">Filter by Floor</label>
+                <select id="floor_level" name="floor_level">
+                    <option value="">All Floors</option>
+                    <option value="ground floor" {{if eq .SelectedFloor "ground floor"}}selected{{end}}>Ground Floor</option>
+                    <option value="middle floor" {{if eq .SelectedFloor "middle floor"}}selected{{end}}>Middle Floor</option>
+                    <option value="top floor" {{if eq .SelectedFloor "top floor"}}selected{{end}}>Top Floor</option>
+                </select>
+            </div>
+            <button type="submit">Apply Filters</button>
+            <a href="/manager/dashboard" style="margin-left: 10px; color: #e74c3c; text-decoration: none; font-size: 0.9rem;">Clear</a>
+        </form>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Student ID</th>
+                    <th>Block</th>
+                    <th>Floor</th>
+                    <th>Room</th>
+                    <th>Amount (₦)</th>
+                    <th>Status</th>
+                    <th>Transaction Ref</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{if .Payments}}
+                    {{range .Payments}}
+                    <tr>
+                        <td>{{.StudentIdentifier}}</td>
+                        <td>{{.Block}}</td>
+                        <td>{{.FloorLevel}}</td>
+                        <td>{{.RoomNumber}}</td>
+                        <td>₦{{.AmountPaid}}</td>
+                        <td class="status-{{.PaymentStatus}}">{{.PaymentStatus}}</td>
+                        <td style="font-family: monospace; font-size: 0.85em; color: #666;">
+                            {{if .ProviderReference}}{{.ProviderReference}}{{else}}N/A{{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                {{else}}
+                    <tr>
+                        <td colspan="7" class="empty-state">No transactions match your filters.</td>
+                    </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

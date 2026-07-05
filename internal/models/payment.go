@@ -18,6 +18,7 @@ type Payment struct {
 	OccupancyType     string    `json:"occupancyType"`
 	AmountPaid        string    `json:"amountPaid"` // e.g. "15000.00" — safe string mapping to NUMERIC(12,2)
 	PaymentStatus     string    `json:"paymentStatus"`
+	ProviderReference string    `json:"providerReference"` // populated once the webhook confirms payment; empty for PENDING rows
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
 }

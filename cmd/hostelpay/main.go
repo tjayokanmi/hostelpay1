@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"fmt"
 	"html/template"
 	"io"
@@ -120,8 +121,7 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *
 			CustomerEmail:  "student@hackathon.com",
 			AmountNaira:    payment.AmountPaid,
 			// NOTE: This sends the user's browser back to the UI handler below!
-			CallbackURL: "https://hostelpay1.onrender.com/checkout/callback",
-		}
+			CallbackURL: "https://hostelpay1.onrender.com/checkout/callback"}
 
 		result, err := nombaClient.GenerateCheckoutLink(r.Context(), req)
 		if err != nil {
@@ -199,8 +199,6 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 
 		if !nomba.VerifySignature(body, receivedSignature, signingKey) {
 			log.Printf("⚠️ webhook signature verification FAILED")
-			// Still logging-only for this first real test — confirming hex
-			// encoding matches before making this a hard reject.
 		} else {
 			log.Printf("✅ webhook signature verified successfully")
 		}
@@ -211,6 +209,20 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+
+		// 👇 NEW CODE STARTS HERE — paste this block in
+		isNew, err := repo.MarkWebhookProcessed(r.Context(), payload.RequestID)
+		if err != nil {
+			log.Printf("webhook idempotency check error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		if !isNew {
+			log.Printf("duplicate webhook received (requestId: %s) — skipping", payload.RequestID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// 👆 NEW CODE ENDS HERE
 
 		if payload.EventType != "payment_success" {
 			log.Printf("webhook received non-success event: %s — acknowledging, no DB update", payload.EventType)
@@ -226,6 +238,78 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 
 		log.Printf("✅ PAYMENT CONFIRMED | Ref: %s | Nomba TxID: %s", payload.Data.Order.OrderReference, payload.Data.Transaction.TransactionID)
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+// 5. THE MANAGER DASHBOARD HANDLERs
+func managerDashboardHandler(repo *repository.PaymentRepository) http.HandlerFunc {
+	tmpl := template.Must(template.ParseFiles("templates/dashboard.html"))
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		blockFilter := r.URL.Query().Get("block")
+		floorFilter := r.URL.Query().Get("floor_level")
+
+		payments, err := repo.GetAllPayments(r.Context(), blockFilter, floorFilter)
+		if err != nil {
+			log.Printf("dashboard query error: %v", err)
+			http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
+			return
+		}
+
+		data := struct {
+			Payments      []models.Payment
+			SelectedBlock string
+			SelectedFloor string
+		}{
+			Payments:      payments,
+			SelectedBlock: blockFilter,
+			SelectedFloor: floorFilter,
+		}
+
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, data); err != nil {
+			log.Printf("dashboard template error: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if _, err := buf.WriteTo(w); err != nil {
+			log.Printf("response write error: %v", err)
+		}
+	}
+}
+
+func healthCheckHandler(dbPool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := dbPool.Ping(r.Context()); err != nil {
+			log.Printf("health check failed: %v", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"unhealthy","error":"database unreachable"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status":"healthy"}`)
+	}
+}
+
+// basicAuthMiddleware is a low-effort stopgap: single manager username/password
+// via HTTP Basic Auth. Not meant to survive past the hackathon — no sessions,
+// no per-manager accounts, credentials live in env vars.
+func basicAuthMiddleware(next http.HandlerFunc, username, password string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+
+		userMatch := subtle.ConstantTimeCompare([]byte(user), []byte(username)) == 1
+		passMatch := subtle.ConstantTimeCompare([]byte(pass), []byte(password)) == 1
+
+		if !ok || !userMatch || !passMatch {
+			w.Header().Set("WWW-Authenticate", `Basic realm="HostelPay Manager"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
 	}
 }
 
@@ -262,7 +346,11 @@ func main() {
 	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo, nombaClient))
 	mux.HandleFunc("GET /checkout/callback", checkoutCallbackHandler())
 	mux.HandleFunc("POST /checkout/webhook", checkoutWebhookHandler(repo, os.Getenv("NOMBA_SIGNATURE_KEY")))
-
+	mux.HandleFunc(
+		"GET /manager/dashboard",
+		basicAuthMiddleware(managerDashboardHandler(repo), os.Getenv("MANAGER_USERNAME"), os.Getenv("MANAGER_PASSWORD")),
+	)
+	mux.HandleFunc("GET /health", healthCheckHandler(dbPool))
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
