@@ -56,7 +56,8 @@ func (r *PaymentRepository) UpdatePaymentStatusByOrderRef(ctx context.Context, o
 	}
 	return nil
 }
-func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, floorFilter string) ([]models.Payment, error) {
+
+func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, floorFilter, statusFilter string) ([]models.Payment, error) {
 	query := `
 		SELECT order_reference, student_identifier, block, floor_level, room_number, occupancy_type, amount_paid, payment_status, provider_reference
 		FROM payments
@@ -75,6 +76,11 @@ func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, flo
 		args = append(args, floorFilter)
 		argID++
 	}
+	if statusFilter != "" {
+		query += fmt.Sprintf(" AND payment_status = $%d", argID)
+		args = append(args, statusFilter)
+		argID++
+	}
 
 	query += " ORDER BY updated_at DESC"
 
@@ -87,17 +93,11 @@ func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, flo
 	var payments []models.Payment
 	for rows.Next() {
 		var p models.Payment
-		var providerRef *string // provider_reference is nullable — must scan into a pointer
+		var providerRef *string
 
 		err := rows.Scan(
-			&p.OrderReference,
-			&p.StudentIdentifier,
-			&p.Block,
-			&p.FloorLevel,
-			&p.RoomNumber,
-			&p.OccupancyType,
-			&p.AmountPaid,
-			&p.PaymentStatus,
+			&p.OrderReference, &p.StudentIdentifier, &p.Block, &p.FloorLevel,
+			&p.RoomNumber, &p.OccupancyType, &p.AmountPaid, &p.PaymentStatus,
 			&providerRef,
 		)
 		if err != nil {

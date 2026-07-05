@@ -248,8 +248,9 @@ func managerDashboardHandler(repo *repository.PaymentRepository) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		blockFilter := r.URL.Query().Get("block")
 		floorFilter := r.URL.Query().Get("floor_level")
+		statusFilter := r.URL.Query().Get("status")
 
-		payments, err := repo.GetAllPayments(r.Context(), blockFilter, floorFilter)
+		payments, err := repo.GetAllPayments(r.Context(), blockFilter, floorFilter, statusFilter)
 		if err != nil {
 			log.Printf("dashboard query error: %v", err)
 			http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
@@ -257,13 +258,15 @@ func managerDashboardHandler(repo *repository.PaymentRepository) http.HandlerFun
 		}
 
 		data := struct {
-			Payments      []models.Payment
-			SelectedBlock string
-			SelectedFloor string
+			Payments       []models.Payment
+			SelectedBlock  string
+			SelectedFloor  string
+			SelectedStatus string
 		}{
-			Payments:      payments,
-			SelectedBlock: blockFilter,
-			SelectedFloor: floorFilter,
+			Payments:       payments,
+			SelectedBlock:  blockFilter,
+			SelectedFloor:  floorFilter,
+			SelectedStatus: statusFilter,
 		}
 
 		var buf bytes.Buffer
