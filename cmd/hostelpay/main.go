@@ -422,6 +422,10 @@ func main() {
 	mux.HandleFunc("GET /{$}", checkoutFormHandler(tmpl))
 	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo, studentRepo, nombaClient))
 	mux.HandleFunc("GET /checkout/callback", checkoutCallbackHandler())
+	
+	mux.HandleFunc("GET /checkout/webhook", func(w http.ResponseWriter, r *http.Request) {
+    w.WriteHeader(http.StatusOK)
+})
 	mux.HandleFunc("POST /checkout/webhook", checkoutWebhookHandler(repo, os.Getenv("NOMBA_SIGNATURE_KEY")))
 	mux.HandleFunc(
 		"GET /manager/dashboard",
