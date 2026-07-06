@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HostelPay — My Account</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-slate-50 min-h-screen p-6">
+    <div class="max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-900">My Transactions</h1>
+                <p class="text-sm text-slate-500">{{.StudentIdentifier}}</p>
+            </div>
+            <form action="/logout" method="POST">
+                <button type="submit" class="text-sm text-slate-500 hover:text-slate-700">Log out</button>
+            </form>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="bg-slate-50 text-xs uppercase text-slate-500">
+                    <tr>
+                        <th class="px-4 py-3">Order Ref</th>
+                        <th class="px-4 py-3">Room</th>
+                        <th class="px-4 py-3">Plan</th>
+                        <th class="px-4 py-3">Amount</th>
+                        <th class="px-4 py-3">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{if .Payments}}
+                        {{range .Payments}}
+                        <tr class="border-t border-slate-100">
+                            <td class="px-4 py-3 font-mono text-xs">{{.OrderReference}}</td>
+                            <td class="px-4 py-3">{{.Block}} — {{.FloorLevel}} — Rm {{.RoomNumber}}</td>
+                            <td class="px-4 py-3 capitalize">{{.OccupancyType}}</td>
+                            <td class="px-4 py-3">₦{{.AmountPaid}}</td>
+                            <td class="px-4 py-3">{{.PaymentStatus}}</td>
+                        </tr>
+                        {{end}}
+                    {{else}}
+                        <tr><td colspan="5" class="px-4 py-8 text-center text-slate-400">No transactions yet.</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

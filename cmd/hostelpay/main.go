@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"hostelpay/internal/auth"
 	"hostelpay/internal/models"
 	"hostelpay/internal/nomba"
 	"hostelpay/internal/repository"
@@ -61,7 +62,7 @@ func checkoutFormHandler(tmpl *template.Template) http.HandlerFunc {
 }
 
 // 2. THE INITIALIZATION HANDLER (Sends data to DB and Nomba)
-func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *nomba.Client) http.HandlerFunc {
+func checkoutInitializeHandler(repo *repository.PaymentRepository, studentRepo *repository.StudentRepository, nombaClient *nomba.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			log.Printf("form parse error: %v", err)
@@ -74,12 +75,65 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *
 		floor := r.FormValue("floor_level")
 		room := r.FormValue("room_number")
 		occupancy := r.FormValue("occupancy_type")
+		password := r.FormValue("password")
 
-		if studentID == "" || block == "" || floor == "" || room == "" || occupancy == "" {
+		if studentID == "" || block == "" || floor == "" || room == "" || occupancy == "" || password == "" {
 			http.Error(w, "All fields are required", http.StatusBadRequest)
 			return
 		}
+		if len(password) < 8 {
+			http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
+			return
+		}
 
+		// --- Account: create if new, or quietly log in if password matches. Never block payment on this. ---
+		existingStudent, err := studentRepo.GetStudentByIdentifier(r.Context(), studentID)
+		if err != nil {
+			log.Printf("student lookup error: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		var studentDBID string
+		if existingStudent == nil {
+			passwordHash, err := auth.HashPassword(password)
+			if err != nil {
+				log.Printf("password hash error: %v", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			studentDBID, err = studentRepo.CreateStudent(r.Context(), studentID, passwordHash)
+			if err != nil {
+				log.Printf("create student error: %v", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			log.Printf("✅ ACCOUNT CREATED | Student: %s", studentID)
+		} else {
+			studentDBID = existingStudent.ID
+			if !auth.CheckPassword(password, existingStudent.PasswordHash) {
+				log.Printf("password mismatch for existing student %s — proceeding with payment anyway, not logging in", studentID)
+			}
+		}
+
+		// Log them in (set session cookie) regardless of new/existing, as long as we have a valid studentDBID
+		// and (for existing accounts) the password actually matched.
+		shouldLogIn := existingStudent == nil || auth.CheckPassword(password, existingStudent.PasswordHash)
+		if shouldLogIn {
+			token, err := auth.GenerateSessionToken()
+			if err != nil {
+				log.Printf("session token error: %v", err)
+			} else {
+				expiresAt := time.Now().Add(sessionDuration)
+				if err := studentRepo.CreateSession(r.Context(), studentDBID, token, expiresAt); err != nil {
+					log.Printf("create session error: %v", err)
+				} else {
+					setSessionCookie(w, r, token, expiresAt)
+				}
+			}
+		}
+
+		// --- Existing payment logic, unchanged from here ---
 		amountKobo, err := calculateRentKobo(occupancy)
 		if err != nil {
 			log.Printf("pricing error: %v", err)
@@ -120,8 +174,8 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, nombaClient *
 			CustomerID:     payment.StudentIdentifier,
 			CustomerEmail:  "student@hackathon.com",
 			AmountNaira:    payment.AmountPaid,
-			// NOTE: This sends the user's browser back to the UI handler below!
-			CallbackURL: "https://hostelpay1.onrender.com/checkout/callback"}
+			CallbackURL:    "https://hostelpay1.onrender.com/checkout/callback",
+		}
 
 		result, err := nombaClient.GenerateCheckoutLink(r.Context(), req)
 		if err != nil {
@@ -147,6 +201,17 @@ var callbackTmpl = template.Must(template.New("callback").Parse(`
 			body { font-family: -apple-system, sans-serif; background-color: #f4f4f9; text-align: center; padding: 50px; }
 			.card { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 500px; margin: 0 auto; }
 			h1 { color: #2e7d32; }
+			.account-link {
+				display: inline-block;
+				margin-top: 20px;
+				background: #2e7d32;
+				color: white;
+				padding: 10px 24px;
+				border-radius: 6px;
+				text-decoration: none;
+				font-weight: 600;
+			}
+			.account-link:hover { background: #256428; }
 		</style>
 	</head>
 	<body>
@@ -154,7 +219,8 @@ var callbackTmpl = template.Must(template.New("callback").Parse(`
 			<h1>🎉 Welcome Back!</h1>
 			<p>Your transaction has been received and is currently processing.</p>
 			<p style="color: #666;">Order Reference: <strong>{{.}}</strong></p>
-			<p>You can safely close this window. Your hostel portal will update automatically once the network confirms the funds.</p>
+			<p>You can safely close this window, or view your account below.</p>
+			<a href="/account" class="account-link">View My Account</a>
 		</div>
 	</body>
 	</html>
@@ -242,8 +308,14 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 }
 
 // 5. THE MANAGER DASHBOARD HANDLERs
+var dashboardFuncMap = template.FuncMap{
+	"isStalePending": func(status string, created time.Time) bool {
+		return status == "PENDING" && time.Since(created) > 30*time.Minute
+	},
+}
+
 func managerDashboardHandler(repo *repository.PaymentRepository) http.HandlerFunc {
-	tmpl := template.Must(template.ParseFiles("templates/dashboard.html"))
+	tmpl := template.Must(template.New("dashboard.html").Funcs(dashboardFuncMap).ParseFiles("templates/dashboard.html"))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		blockFilter := r.URL.Query().Get("block")
@@ -341,12 +413,14 @@ func main() {
 		os.Getenv("NOMBA_PARENT_ACCOUNT_ID"),
 		os.Getenv("NOMBA_SUB_ACCOUNT_ID"),
 	)
-
+	studentRepo := repository.NewStudentRepository(dbPool)
+	loginTmpl := template.Must(template.ParseFiles("templates/login.html"))
+	accountTmpl := template.Must(template.ParseFiles("templates/account_dashboard.html"))
 	tmpl := template.Must(template.ParseFiles("templates/checkout.html"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", checkoutFormHandler(tmpl))
-	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo, nombaClient))
+	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo, studentRepo, nombaClient))
 	mux.HandleFunc("GET /checkout/callback", checkoutCallbackHandler())
 	mux.HandleFunc("POST /checkout/webhook", checkoutWebhookHandler(repo, os.Getenv("NOMBA_SIGNATURE_KEY")))
 	mux.HandleFunc(
@@ -354,6 +428,10 @@ func main() {
 		basicAuthMiddleware(managerDashboardHandler(repo), os.Getenv("MANAGER_USERNAME"), os.Getenv("MANAGER_PASSWORD")),
 	)
 	mux.HandleFunc("GET /health", healthCheckHandler(dbPool))
+	mux.HandleFunc("GET /login", loginFormHandler(loginTmpl))
+	mux.HandleFunc("POST /login", loginHandler(studentRepo))
+	mux.HandleFunc("POST /logout", logoutHandler(studentRepo))
+	mux.HandleFunc("GET /account", requireAuth(accountDashboardHandler(repo, accountTmpl), studentRepo))
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

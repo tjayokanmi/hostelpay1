@@ -79,7 +79,12 @@
                         <td>{{.FloorLevel}}</td>
                         <td>{{.RoomNumber}}</td>
                         <td>₦{{.AmountPaid}}</td>
-                        <td class="status-{{.PaymentStatus}}">{{.PaymentStatus}}</td>
+                        <td class="status-{{.PaymentStatus}}">
+                            {{.PaymentStatus}}
+                            {{if isStalePending .PaymentStatus .CreatedAt}}
+                             <br><span style="font-size: 0.75em; color: #e74c3c;">⚠ Stuck &gt;30min — likely abandoned</span>
+                         {{end}}
+                        </td>
                         <td style="font-family: monospace; font-size: 0.85em; color: #666;">
                             {{if .ProviderReference}}{{.ProviderReference}}{{else}}N/A{{end}}
                         </td>

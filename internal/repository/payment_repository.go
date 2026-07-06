@@ -59,10 +59,10 @@ func (r *PaymentRepository) UpdatePaymentStatusByOrderRef(ctx context.Context, o
 
 func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, floorFilter, statusFilter string) ([]models.Payment, error) {
 	query := `
-		SELECT order_reference, student_identifier, block, floor_level, room_number, occupancy_type, amount_paid, payment_status, provider_reference
-		FROM payments
-		WHERE 1=1
-	`
+    SELECT order_reference, student_identifier, block, floor_level, room_number, occupancy_type, amount_paid, payment_status, provider_reference, created_at
+    FROM payments
+    WHERE 1=1
+`
 	var args []interface{}
 	argID := 1
 
@@ -98,7 +98,7 @@ func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, flo
 		err := rows.Scan(
 			&p.OrderReference, &p.StudentIdentifier, &p.Block, &p.FloorLevel,
 			&p.RoomNumber, &p.OccupancyType, &p.AmountPaid, &p.PaymentStatus,
-			&providerRef,
+			&providerRef, &p.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan payment row: %w", err)
@@ -129,4 +129,38 @@ func (r *PaymentRepository) MarkWebhookProcessed(ctx context.Context, requestID 
 		return false, fmt.Errorf("failed to mark webhook processed: %w", err)
 	}
 	return true, nil
+}
+
+func (r *PaymentRepository) ListPaymentsByStudent(ctx context.Context, identifier string) ([]models.Payment, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT order_reference, student_identifier, block, floor_level, room_number, occupancy_type, amount_paid, payment_status, provider_reference
+		FROM payments
+		WHERE student_identifier = $1
+		ORDER BY updated_at DESC
+	`, identifier)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query student payments: %w", err)
+	}
+	defer rows.Close()
+
+	var payments []models.Payment
+	for rows.Next() {
+		var p models.Payment
+		var providerRef *string
+		if err := rows.Scan(
+			&p.OrderReference, &p.StudentIdentifier, &p.Block, &p.FloorLevel,
+			&p.RoomNumber, &p.OccupancyType, &p.AmountPaid, &p.PaymentStatus,
+			&providerRef,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan payment row: %w", err)
+		}
+		if providerRef != nil {
+			p.ProviderReference = *providerRef
+		}
+		payments = append(payments, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating payment rows: %w", err)
+	}
+	return payments, nil
 }
