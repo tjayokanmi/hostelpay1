@@ -432,6 +432,10 @@ func main() {
 	mux.HandleFunc("POST /login", loginHandler(studentRepo))
 	mux.HandleFunc("POST /logout", logoutHandler(studentRepo))
 	mux.HandleFunc("GET /account", requireAuth(accountDashboardHandler(repo, accountTmpl), studentRepo))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+    w.WriteHeader(http.StatusOK)
+    w.Write([]byte("ok"))
+})
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
