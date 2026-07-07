@@ -164,18 +164,18 @@ type CheckoutRequest struct {
 }
 
 type nombaOrder struct {
-	CallbackURL            string `json:"callbackUrl"`
-	CustomerEmail          string `json:"customerEmail"`
-	Amount                 string `json:"amount"`
-	Currency               string `json:"currency"`
-	OrderReference         string `json:"orderReference"`
-	CustomerID             string `json:"customerId"`
-	AccountID              string `json:"accountId"`
-	IsTokenizedCardPayment bool   `json:"isTokenizedCardPayment"`
+	CallbackURL    string `json:"callbackUrl"`
+	CustomerEmail  string `json:"customerEmail"`
+	Amount         string `json:"amount"`
+	Currency       string `json:"currency"`
+	OrderReference string `json:"orderReference"`
+	CustomerID     string `json:"customerId"`
+	AccountID      string `json:"accountId"`
 }
 
 type nombaCheckoutPayload struct {
-	Order nombaOrder `json:"order"`
+	Order        nombaOrder `json:"order"`
+	TokenizeCard bool       `json:"tokenizeCard"`
 }
 
 type CheckoutResponse struct {
@@ -195,15 +195,15 @@ type CheckoutResult struct {
 func buildCheckoutPayload(req CheckoutRequest, subAccountID string) (nombaCheckoutPayload, error) {
 	payload := nombaCheckoutPayload{
 		Order: nombaOrder{
-			CallbackURL:            req.CallbackURL,
-			CustomerEmail:          req.CustomerEmail,
-			Amount:                 req.AmountNaira,
-			Currency:               "NGN",
-			OrderReference:         req.OrderReference,
-			CustomerID:             req.CustomerID,
-			AccountID:              subAccountID,
-			IsTokenizedCardPayment: req.TokenizeCard,
+			CallbackURL:    req.CallbackURL,
+			CustomerEmail:  req.CustomerEmail,
+			Amount:         req.AmountNaira,
+			Currency:       "NGN",
+			OrderReference: req.OrderReference,
+			CustomerID:     req.CustomerID,
+			AccountID:      subAccountID,
 		},
+		TokenizeCard: req.TokenizeCard,
 	}
 
 	return payload, nil
@@ -263,20 +263,20 @@ func (c *Client) GenerateCheckoutLink(ctx context.Context, req CheckoutRequest) 
 
 type TokenListResponse struct {
 	Code string `json:"code"`
-	Data []struct {
-		CardID string `json:"cardId"`
+	Data struct {
+		TokenizedCardDataList []struct {
+			TokenKey string `json:"tokenKey"`
+		} `json:"tokenizedCardDataList"`
 	} `json:"data"`
 }
 
-// ListTokens returns saved card tokens for a customer.
 func (c *Client) ListTokens(ctx context.Context, customerID string) ([]string, error) {
 	token, err := c.getAccessToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to obtain access token: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/tokenized-card/list?customerId=%s", c.baseURL, customerID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/checkout/tokenized-card-data", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token list request: %w", err)
 	}
@@ -304,49 +304,55 @@ func (c *Client) ListTokens(ctx context.Context, customerID string) ([]string, e
 	}
 
 	var tokens []string
-	for _, t := range listResp.Data {
-		tokens = append(tokens, t.CardID)
+	for _, t := range listResp.Data.TokenizedCardDataList {
+		tokens = append(tokens, t.TokenKey)
 	}
 	return tokens, nil
 }
 
+type chargeOrderRequest struct {
+	OrderReference string `json:"orderReference"`
+	CustomerID     string `json:"customerId"`
+	CallbackURL    string `json:"callbackUrl"`
+	CustomerEmail  string `json:"customerEmail"`
+	Amount         string `json:"amount"`
+	Currency       string `json:"currency"`
+}
+
 type chargeRequest struct {
-	Amount        string `json:"amount"`
-	Currency      string `json:"currency"`
-	CardID        string `json:"cardId"`
-	CustomerID    string `json:"customerId"`
-	MerchantTxRef string `json:"merchantTxRef"`
+	Order    chargeOrderRequest `json:"order"`
+	TokenKey string             `json:"tokenKey"`
 }
 
 type ChargeResponse struct {
-	Code        string `json:"code"`
-	Description string `json:"description"`
-	Data        struct {
-		TransactionID string `json:"transactionId"`
-		Status        string `json:"status"`
+	Code string `json:"code"`
+	Data struct {
+		Status  bool   `json:"status"`
+		Message string `json:"message"`
 	} `json:"data"`
 }
 
 type ChargeResult struct {
-	TransactionID string
-	Status        string
+	Success bool
+	Message string
 }
 
-// ChargeToken charges a previously saved card token. amountNaira must be a
-// decimal string like "150.00" — same convention as checkout. merchantTxRef
-// must be unique per attempt for idempotency, per Nomba's docs.
-func (c *Client) ChargeToken(ctx context.Context, amountNaira, cardToken, customerID, merchantTxRef string) (ChargeResult, error) {
+func (c *Client) ChargeToken(ctx context.Context, amountNaira, cardToken, customerID, customerEmail, callbackURL, orderReference string) (ChargeResult, error) {
 	token, err := c.getAccessToken(ctx)
 	if err != nil {
 		return ChargeResult{}, fmt.Errorf("failed to obtain access token: %w", err)
 	}
 
 	payload := chargeRequest{
-		Amount:        amountNaira,
-		Currency:      "NGN",
-		CardID:        cardToken,
-		CustomerID:    customerID,
-		MerchantTxRef: merchantTxRef,
+		Order: chargeOrderRequest{
+			OrderReference: orderReference,
+			CustomerID:     customerID,
+			CallbackURL:    callbackURL,
+			CustomerEmail:  customerEmail,
+			Amount:         amountNaira,
+			Currency:       "NGN",
+		},
+		TokenKey: cardToken,
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -354,7 +360,7 @@ func (c *Client) ChargeToken(ctx context.Context, amountNaira, cardToken, custom
 		return ChargeResult{}, fmt.Errorf("failed to marshal charge request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/tokenized-card/charge", bytes.NewReader(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/checkout/tokenized-card-payment", bytes.NewReader(payloadBytes))
 	if err != nil {
 		return ChargeResult{}, fmt.Errorf("failed to create charge request: %w", err)
 	}
@@ -390,8 +396,8 @@ func (c *Client) ChargeToken(ctx context.Context, amountNaira, cardToken, custom
 	}
 
 	return ChargeResult{
-		TransactionID: chargeResp.Data.TransactionID,
-		Status:        chargeResp.Data.Status,
+		Success: chargeResp.Data.Status,
+		Message: chargeResp.Data.Message,
 	}, nil
 }
 

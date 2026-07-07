@@ -492,9 +492,9 @@ func runBillingCycleHandler(subRepo *repository.SubscriptionRepository, nombaCli
 			koboPart := amountKobo % 100
 			amountStr := fmt.Sprintf("%d.%02d", nairaPart, koboPart)
 
-			merchantTxRef := fmt.Sprintf("recur_%s_%s", sub.StudentIdentifier, time.Now().Format("200601021504"))
+			orderReference := fmt.Sprintf("recur_%s_%s", sub.StudentIdentifier, time.Now().Format("200601021504"))
 
-			chargeResult, err := nombaClient.ChargeToken(r.Context(), amountStr, sub.CardToken, sub.StudentIdentifier, merchantTxRef)
+			chargeResult, err := nombaClient.ChargeToken(r.Context(), amountStr, sub.CardToken, sub.StudentIdentifier, "student@hackathon.com", "https://hostelpay1.onrender.com/checkout/callback", orderReference)
 			if err != nil {
 				log.Printf("❌ CHARGE FAILED | Student: %s | Error: %v", sub.StudentIdentifier, err)
 				results = append(results, fmt.Sprintf("FAILED: %s (%v)", sub.StudentIdentifier, err))
@@ -505,14 +505,14 @@ func runBillingCycleHandler(subRepo *repository.SubscriptionRepository, nombaCli
 				log.Printf("failed to advance charge date for %s: %v", sub.StudentIdentifier, err)
 			}
 
-			log.Printf("✅ RECURRING CHARGE SUCCESS | Student: %s | TxID: %s", sub.StudentIdentifier, chargeResult.TransactionID)
-			results = append(results, fmt.Sprintf("SUCCESS: %s (tx: %s)", sub.StudentIdentifier, chargeResult.TransactionID))
-		}
+			log.Printf("✅ RECURRING CHARGE SUCCESS | Student: %s | Message: %s", sub.StudentIdentifier, chargeResult.Message)
+			results = append(results, fmt.Sprintf("SUCCESS: %s (%s)", sub.StudentIdentifier, chargeResult.Message))
 
-		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "Billing cycle complete. Processed %d subscriptions:\n", len(due))
-		for _, r := range results {
-			fmt.Fprintf(w, "- %s\n", r)
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintf(w, "Billing cycle complete. Processed %d subscriptions:\n", len(due))
+			for _, r := range results {
+				fmt.Fprintf(w, "- %s\n", r)
+			}
 		}
 	}
 }
