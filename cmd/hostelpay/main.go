@@ -272,14 +272,8 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 		}
 		log.Printf("--- RAW WEBHOOK BODY ---")
 		log.Printf("%s", string(body))
-
 		receivedSignature := r.Header.Get("nomba-signature")
-
-		if !nomba.VerifySignature(body, receivedSignature, signingKey) {
-			log.Printf("⚠️ webhook signature verification FAILED")
-		} else {
-			log.Printf("✅ webhook signature verified successfully")
-		}
+		timestamp := r.Header.Get("nomba-timestamp")
 
 		payload, err := nomba.ParseWebhookPayload(body)
 		if err != nil {
@@ -288,7 +282,13 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 			return
 		}
 
-		// 👇 NEW CODE STARTS HERE — paste this block in
+		if !nomba.VerifySignature(payload, timestamp, receivedSignature, signingKey) {
+			log.Printf("⚠️ webhook signature verification FAILED")
+			http.Error(w, "invalid signature", http.StatusUnauthorized)
+			return
+		}
+		log.Printf("✅ webhook signature verified successfully")
+
 		isNew, err := repo.MarkWebhookProcessed(r.Context(), payload.RequestID)
 		if err != nil {
 			log.Printf("webhook idempotency check error: %v", err)

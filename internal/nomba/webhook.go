@@ -3,13 +3,11 @@ package nomba
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 )
 
-// WebhookPayload mirrors the payment notification shape forwarded by the
-// hackathon's webhook relay.
 type WebhookPayload struct {
 	EventType string `json:"event_type"`
 	RequestID string `json:"requestId"`
@@ -30,14 +28,31 @@ type WebhookPayload struct {
 	} `json:"data"`
 }
 
-// VerifySignature computes HMAC-SHA256 over the RAW request body (not a
-// reconstructed field string) using the hackathon-provided signing key,
-// hex-encodes it, and compares it against the "nomba-signature" header
-// using a constant-time comparison to prevent timing attacks.
-func VerifySignature(rawBody []byte, receivedSignature, signingKey string) bool {
+// VerifySignature recreates Nomba's HMAC-SHA256 signature over the specific
+// concatenated fields (per https://developer.nomba.com/docs/api-basics/webhook)
+// and compares it against the nomba-signature header, base64-encoded.
+func VerifySignature(payload WebhookPayload, timestamp, receivedSignature, signingKey string) bool {
+	responseCode := payload.Data.Transaction.ResponseCode
+	if responseCode == "null" {
+		responseCode = ""
+	}
+
+	hashingPayload := fmt.Sprintf(
+		"%s:%s:%s:%s:%s:%s:%s:%s:%s",
+		payload.EventType,
+		payload.RequestID,
+		payload.Data.Merchant.UserID,
+		payload.Data.Merchant.WalletID,
+		payload.Data.Transaction.TransactionID,
+		payload.Data.Transaction.Type,
+		payload.Data.Transaction.Time,
+		responseCode,
+		timestamp,
+	)
+
 	mac := hmac.New(sha256.New, []byte(signingKey))
-	mac.Write(rawBody)
-	expected := hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(hashingPayload))
+	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(expected), []byte(receivedSignature))
 }
