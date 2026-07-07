@@ -46,14 +46,14 @@
                 </select>
             </div>
             <div class="filter-group">
-    <label for="status">Status</label>
-    <select id="status" name="status">
-        <option value="">All Statuses</option>
-        <option value="SUCCESS" {{if eq .SelectedStatus "SUCCESS"}}selected{{end}}>Success</option>
-        <option value="PENDING" {{if eq .SelectedStatus "PENDING"}}selected{{end}}>Pending</option>
-        <option value="FAILED" {{if eq .SelectedStatus "FAILED"}}selected{{end}}>Failed</option>
-    </select>
-</div>
+                <label for="status">Status</label>
+                <select id="status" name="status">
+                    <option value="">All Statuses</option>
+                    <option value="SUCCESS" {{if eq .SelectedStatus "SUCCESS"}}selected{{end}}>Success</option>
+                    <option value="PENDING" {{if eq .SelectedStatus "PENDING"}}selected{{end}}>Pending</option>
+                    <option value="FAILED" {{if eq .SelectedStatus "FAILED"}}selected{{end}}>Failed</option>
+                </select>
+            </div>
             <button type="submit">Apply Filters</button>
             <a href="/manager/dashboard" style="margin-left: 10px; color: #e74c3c; text-decoration: none; font-size: 0.9rem;">Clear</a>
         </form>
@@ -72,20 +72,14 @@
             </thead>
             <tbody>
                 {{if .Payments}}
-                       {{range .Payments}}
-                        <tr>
-                            <td>{{.StudentFullName}}</td>
-                            <td>{{.Block}}</td>
-                            <td>{{.RoomNumber}}</td>
-                            <td>{{.CreatedAt.Format "January 2006"}}</td>
-                            <td>₦{{.AmountPaid}}</td>
-                            <td class="status-{{.PaymentStatus}}">{{.PaymentStatus}}</td>
-                            <td style="font-family: monospace; font-size: 0.85em; color: #666;">
-                                {{if .ProviderReference}}{{.ProviderReference}}{{else}}N/A{{end}}
-                            </td>
-                        </tr>
-                        {{end}}
-                        </td>
+                    {{range .Payments}}
+                    <tr>
+                        <td>{{.StudentFullName}}</td>
+                        <td>{{.Block}}</td>
+                        <td>{{.RoomNumber}}</td>
+                        <td>{{.CreatedAt.Format "January 2006"}}</td>
+                        <td>₦{{.AmountPaid}}</td>
+                        <td class="status-{{.PaymentStatus}}">{{.PaymentStatus}}</td>
                         <td style="font-family: monospace; font-size: 0.85em; color: #666;">
                             {{if .ProviderReference}}{{.ProviderReference}}{{else}}N/A{{end}}
                         </td>
