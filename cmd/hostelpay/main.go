@@ -470,7 +470,8 @@ func runBillingCycleHandler(subRepo *repository.SubscriptionRepository, nombaCli
 
 		results := []string{}
 		for _, sub := range due {
-			amountKobo, err := calculateRentKobo(nombaClient.Environment(), sub.OccupancyType)			if err != nil {
+			amountKobo, err := calculateRentKobo(nombaClient.Environment(), sub.OccupancyType)
+			if err != nil {
 				log.Printf("billing cycle pricing error for %s: %v", sub.StudentIdentifier, err)
 				continue
 			}
