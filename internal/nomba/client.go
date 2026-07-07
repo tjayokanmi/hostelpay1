@@ -164,13 +164,14 @@ type CheckoutRequest struct {
 }
 
 type nombaOrder struct {
-	CallbackURL    string `json:"callbackUrl"`
-	CustomerEmail  string `json:"customerEmail"`
-	Amount         string `json:"amount"`
-	Currency       string `json:"currency"`
-	OrderReference string `json:"orderReference"`
-	CustomerID     string `json:"customerId"`
-	AccountID      string `json:"accountId"`
+	CallbackURL            string `json:"callbackUrl"`
+	CustomerEmail          string `json:"customerEmail"`
+	Amount                 string `json:"amount"`
+	Currency               string `json:"currency"`
+	OrderReference         string `json:"orderReference"`
+	CustomerID             string `json:"customerId"`
+	AccountID              string `json:"accountId"`
+	IsTokenizedCardPayment bool   `json:"isTokenizedCardPayment"`
 }
 
 type nombaCheckoutPayload struct {
@@ -195,13 +196,14 @@ type CheckoutResult struct {
 func buildCheckoutPayload(req CheckoutRequest, subAccountID string) (nombaCheckoutPayload, error) {
 	payload := nombaCheckoutPayload{
 		Order: nombaOrder{
-			CallbackURL:    req.CallbackURL,
-			CustomerEmail:  req.CustomerEmail,
-			Amount:         req.AmountNaira,
-			Currency:       "NGN",
-			OrderReference: req.OrderReference,
-			CustomerID:     req.CustomerID,
-			AccountID:      subAccountID,
+			CallbackURL:            req.CallbackURL,
+			CustomerEmail:          req.CustomerEmail,
+			Amount:                 req.AmountNaira,
+			Currency:               "NGN",
+			OrderReference:         req.OrderReference,
+			CustomerID:             req.CustomerID,
+			AccountID:              subAccountID,
+			IsTokenizedCardPayment: req.TokenizeCard,
 		},
 		TokenizeCard: req.TokenizeCard,
 	}
