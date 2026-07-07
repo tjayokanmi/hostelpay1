@@ -12,13 +12,14 @@ type Payment struct {
 	ID                string    `json:"id"`
 	OrderReference    string    `json:"orderReference"`
 	StudentIdentifier string    `json:"studentIdentifier"`
+	StudentFullName   string    `json:"studentFullName"` // joined from students table, not stored on payments itself
 	Block             string    `json:"block"`
 	FloorLevel        string    `json:"floorLevel"`
 	RoomNumber        string    `json:"roomNumber"`
 	OccupancyType     string    `json:"occupancyType"`
-	AmountPaid        string    `json:"amountPaid"` // e.g. "15000.00" — safe string mapping to NUMERIC(12,2)
+	AmountPaid        string    `json:"amountPaid"`
 	PaymentStatus     string    `json:"paymentStatus"`
-	ProviderReference string    `json:"providerReference"` // populated once the webhook confirms payment; empty for PENDING rows
+	ProviderReference string    `json:"providerReference"`
 	CreatedAt         time.Time `json:"createdAt"`
 	UpdatedAt         time.Time `json:"updatedAt"`
 }

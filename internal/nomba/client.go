@@ -11,19 +11,28 @@ import (
 	"time"
 )
 
-// Confirmed via curl against the hackathon sandbox — both auth and checkout
-// use standard /v1/ routing, no /sandbox/ prefix quirk.
+type Environment string
+
 const (
-	authURL     = "https://sandbox.nomba.com/v1/auth/token/issue"
-	checkoutURL = "https://sandbox.nomba.com/v1/checkout/order"
+	EnvSandbox    Environment = "sandbox"
+	EnvProduction Environment = "production"
 )
+
+func baseURLFor(env Environment) string {
+	if env == EnvProduction {
+		return "https://api.nomba.com/v1"
+	}
+	return "https://sandbox.nomba.com/v1"
+}
 
 // Client handles all communication with the Nomba API.
 type Client struct {
+	env             Environment
+	baseURL         string
 	clientID        string
 	clientSecret    string
-	parentAccountID string // accountId HEADER — authenticates the request
-	subAccountID    string // accountId in the order BODY — routes settlement
+	parentAccountID string
+	subAccountID    string
 	httpClient      *http.Client
 
 	mu          sync.Mutex
@@ -31,14 +40,22 @@ type Client struct {
 	tokenExpiry time.Time
 }
 
-func NewClient(clientID, clientSecret, parentAccountID, subAccountID string) *Client {
+func NewClient(env Environment, clientID, clientSecret, parentAccountID, subAccountID string) *Client {
 	return &Client{
+		env:             env,
+		baseURL:         baseURLFor(env),
 		clientID:        clientID,
 		clientSecret:    clientSecret,
 		parentAccountID: parentAccountID,
 		subAccountID:    subAccountID,
 		httpClient:      &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+// Environment exposes which mode this client is running in, so callers
+// (e.g. pricing logic) can branch on it without duplicating the concept.
+func (c *Client) Environment() Environment {
+	return c.env
 }
 
 type tokenRequest struct {
@@ -48,8 +65,14 @@ type tokenRequest struct {
 }
 
 type tokenResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int64  `json:"expires_in"`
+	Code        string `json:"code"`
+	Description string `json:"description"`
+	Data        struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		BusinessID   string `json:"businessId"`
+		ExpiresAt    string `json:"expiresAt"`
+	} `json:"data"`
 }
 
 func (c *Client) getAccessToken(ctx context.Context) (string, error) {
@@ -70,7 +93,7 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to marshal token request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, authURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/auth/token/issue", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to create token request: %w", err)
 	}
@@ -83,22 +106,35 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read nomba auth response body: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("nomba auth returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var tokenResp tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
 		return "", fmt.Errorf("failed to decode token response: %w", err)
 	}
 
+	if tokenResp.Data.AccessToken == "" {
+		return "", fmt.Errorf("nomba auth returned an empty access token (raw: %s)", string(respBody))
+	}
+
+	expiresAt, err := time.Parse(time.RFC3339, tokenResp.Data.ExpiresAt)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse token expiry %q: %w", tokenResp.Data.ExpiresAt, err)
+	}
+
 	c.mu.Lock()
-	c.accessToken = tokenResp.AccessToken
-	c.tokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn)*time.Second - 30*time.Second)
+	c.accessToken = tokenResp.Data.AccessToken
+	c.tokenExpiry = expiresAt.Add(-30 * time.Second)
 	c.mu.Unlock()
 
-	return tokenResp.AccessToken, nil
+	return tokenResp.Data.AccessToken, nil
 }
 
 type CheckoutRequest struct {
@@ -160,7 +196,7 @@ func (c *Client) GenerateCheckoutLink(ctx context.Context, req CheckoutRequest) 
 		return CheckoutResult{}, fmt.Errorf("failed to marshal nomba request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, checkoutURL, bytes.NewReader(payloadBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/checkout/order", bytes.NewReader(payloadBytes))
 	if err != nil {
 		return CheckoutResult{}, fmt.Errorf("failed to create checkout request: %w", err)
 	}

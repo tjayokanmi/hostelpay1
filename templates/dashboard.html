@@ -61,10 +61,10 @@
         <table>
             <thead>
                 <tr>
-                    <th>Student ID</th>
+                    <th>Student Name</th>
                     <th>Block</th>
-                    <th>Floor</th>
                     <th>Room</th>
+                    <th>Month</th>
                     <th>Amount (₦)</th>
                     <th>Status</th>
                     <th>Transaction Ref</th>
@@ -72,18 +72,19 @@
             </thead>
             <tbody>
                 {{if .Payments}}
-                    {{range .Payments}}
-                    <tr>
-                        <td>{{.StudentIdentifier}}</td>
-                        <td>{{.Block}}</td>
-                        <td>{{.FloorLevel}}</td>
-                        <td>{{.RoomNumber}}</td>
-                        <td>₦{{.AmountPaid}}</td>
-                        <td class="status-{{.PaymentStatus}}">
-                            {{.PaymentStatus}}
-                            {{if isStalePending .PaymentStatus .CreatedAt}}
-                             <br><span style="font-size: 0.75em; color: #e74c3c;">⚠ Stuck &gt;30min — likely abandoned</span>
-                         {{end}}
+                       {{range .Payments}}
+                        <tr>
+                            <td>{{.StudentFullName}}</td>
+                            <td>{{.Block}}</td>
+                            <td>{{.RoomNumber}}</td>
+                            <td>{{.CreatedAt.Format "January 2006"}}</td>
+                            <td>₦{{.AmountPaid}}</td>
+                            <td class="status-{{.PaymentStatus}}">{{.PaymentStatus}}</td>
+                            <td style="font-family: monospace; font-size: 0.85em; color: #666;">
+                                {{if .ProviderReference}}{{.ProviderReference}}{{else}}N/A{{end}}
+                            </td>
+                        </tr>
+                        {{end}}
                         </td>
                         <td style="font-family: monospace; font-size: 0.85em; color: #666;">
                             {{if .ProviderReference}}{{.ProviderReference}}{{else}}N/A{{end}}

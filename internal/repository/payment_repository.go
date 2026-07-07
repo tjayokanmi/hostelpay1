@@ -59,30 +59,33 @@ func (r *PaymentRepository) UpdatePaymentStatusByOrderRef(ctx context.Context, o
 
 func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, floorFilter, statusFilter string) ([]models.Payment, error) {
 	query := `
-    SELECT order_reference, student_identifier, block, floor_level, room_number, occupancy_type, amount_paid, payment_status, provider_reference, created_at
-    FROM payments
-    WHERE 1=1
-`
+		SELECT p.order_reference, p.student_identifier, p.block, p.floor_level, p.room_number,
+		       p.occupancy_type, p.amount_paid, p.payment_status, p.provider_reference, p.created_at,
+		       COALESCE(s.full_name, '') AS full_name
+		FROM payments p
+		LEFT JOIN students s ON s.student_identifier = p.student_identifier
+		WHERE 1=1
+	`
 	var args []interface{}
 	argID := 1
 
 	if blockFilter != "" {
-		query += fmt.Sprintf(" AND block = $%d", argID)
+		query += fmt.Sprintf(" AND p.block = $%d", argID)
 		args = append(args, blockFilter)
 		argID++
 	}
 	if floorFilter != "" {
-		query += fmt.Sprintf(" AND floor_level = $%d", argID)
+		query += fmt.Sprintf(" AND p.floor_level = $%d", argID)
 		args = append(args, floorFilter)
 		argID++
 	}
 	if statusFilter != "" {
-		query += fmt.Sprintf(" AND payment_status = $%d", argID)
+		query += fmt.Sprintf(" AND p.payment_status = $%d", argID)
 		args = append(args, statusFilter)
 		argID++
 	}
 
-	query += " ORDER BY updated_at DESC"
+	query += " ORDER BY p.updated_at DESC"
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
@@ -98,13 +101,16 @@ func (r *PaymentRepository) GetAllPayments(ctx context.Context, blockFilter, flo
 		err := rows.Scan(
 			&p.OrderReference, &p.StudentIdentifier, &p.Block, &p.FloorLevel,
 			&p.RoomNumber, &p.OccupancyType, &p.AmountPaid, &p.PaymentStatus,
-			&providerRef, &p.CreatedAt,
+			&providerRef, &p.CreatedAt, &p.StudentFullName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan payment row: %w", err)
 		}
 		if providerRef != nil {
 			p.ProviderReference = *providerRef
+		}
+		if p.StudentFullName == "" {
+			p.StudentFullName = p.StudentIdentifier // fallback if no matching student account
 		}
 		payments = append(payments, p)
 	}

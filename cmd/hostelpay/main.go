@@ -71,16 +71,18 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, studentRepo *
 		}
 
 		studentID := r.FormValue("student_identifier")
+		fullName := r.FormValue("full_name")
 		block := r.FormValue("block")
 		floor := r.FormValue("floor_level")
 		room := r.FormValue("room_number")
 		occupancy := r.FormValue("occupancy_type")
 		password := r.FormValue("password")
 
-		if studentID == "" || block == "" || floor == "" || room == "" || occupancy == "" || password == "" {
+		if studentID == "" || fullName == "" || block == "" || floor == "" || room == "" || occupancy == "" || password == "" {
 			http.Error(w, "All fields are required", http.StatusBadRequest)
 			return
 		}
+
 		if len(password) < 8 {
 			http.Error(w, "Password must be at least 8 characters", http.StatusBadRequest)
 			return
@@ -102,13 +104,13 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, studentRepo *
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
-			studentDBID, err = studentRepo.CreateStudent(r.Context(), studentID, passwordHash)
+			studentDBID, err = studentRepo.CreateStudent(r.Context(), studentID, fullName, passwordHash)
 			if err != nil {
 				log.Printf("create student error: %v", err)
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 				return
 			}
-			log.Printf("✅ ACCOUNT CREATED | Student: %s", studentID)
+			log.Printf("✅ ACCOUNT CREATED | Student: %s (%s)", studentID, fullName)
 		} else {
 			studentDBID = existingStudent.ID
 			if !auth.CheckPassword(password, existingStudent.PasswordHash) {
@@ -407,12 +409,19 @@ func main() {
 
 	repo := repository.NewPaymentRepository(dbPool)
 
+	nombaEnv := nomba.EnvSandbox
+	if os.Getenv("NOMBA_ENV") == "production" {
+		nombaEnv = nomba.EnvProduction
+	}
+
 	nombaClient := nomba.NewClient(
+		nombaEnv,
 		os.Getenv("NOMBA_CLIENT_ID"),
 		os.Getenv("NOMBA_CLIENT_SECRET"),
 		os.Getenv("NOMBA_PARENT_ACCOUNT_ID"),
 		os.Getenv("NOMBA_SUB_ACCOUNT_ID"),
 	)
+
 	studentRepo := repository.NewStudentRepository(dbPool)
 	loginTmpl := template.Must(template.ParseFiles("templates/login.html"))
 	accountTmpl := template.Must(template.ParseFiles("templates/account_dashboard.html"))
@@ -422,10 +431,10 @@ func main() {
 	mux.HandleFunc("GET /{$}", checkoutFormHandler(tmpl))
 	mux.HandleFunc("POST /checkout/initialize", checkoutInitializeHandler(repo, studentRepo, nombaClient))
 	mux.HandleFunc("GET /checkout/callback", checkoutCallbackHandler())
-	
+
 	mux.HandleFunc("GET /checkout/webhook", func(w http.ResponseWriter, r *http.Request) {
-    w.WriteHeader(http.StatusOK)
-})
+		w.WriteHeader(http.StatusOK)
+	})
 	mux.HandleFunc("POST /checkout/webhook", checkoutWebhookHandler(repo, os.Getenv("NOMBA_SIGNATURE_KEY")))
 	mux.HandleFunc(
 		"GET /manager/dashboard",
@@ -437,9 +446,9 @@ func main() {
 	mux.HandleFunc("POST /logout", logoutHandler(studentRepo))
 	mux.HandleFunc("GET /account", requireAuth(accountDashboardHandler(repo, accountTmpl), studentRepo))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-    w.WriteHeader(http.StatusOK)
-    w.Write([]byte("ok"))
-})
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

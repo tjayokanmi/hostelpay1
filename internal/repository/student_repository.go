@@ -20,13 +20,13 @@ func NewStudentRepository(db *pgxpool.Pool) *StudentRepository {
 	return &StudentRepository{db: db}
 }
 
-func (r *StudentRepository) CreateStudent(ctx context.Context, identifier, passwordHash string) (string, error) {
+func (r *StudentRepository) CreateStudent(ctx context.Context, identifier, fullName, passwordHash string) (string, error) {
 	var id string
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO students (student_identifier, password_hash)
-		VALUES ($1, $2)
+		INSERT INTO students (student_identifier, full_name, password_hash)
+		VALUES ($1, $2, $3)
 		RETURNING id
-	`, identifier, passwordHash).Scan(&id)
+	`, identifier, fullName, passwordHash).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("failed to create student: %w", err)
 	}
@@ -36,9 +36,9 @@ func (r *StudentRepository) CreateStudent(ctx context.Context, identifier, passw
 func (r *StudentRepository) GetStudentByIdentifier(ctx context.Context, identifier string) (*models.Student, error) {
 	var s models.Student
 	err := r.db.QueryRow(ctx, `
-		SELECT id, student_identifier, password_hash, created_at
+		SELECT id, student_identifier, full_name, password_hash, created_at
 		FROM students WHERE student_identifier = $1
-	`, identifier).Scan(&s.ID, &s.StudentIdentifier, &s.PasswordHash, &s.CreatedAt)
+	`, identifier).Scan(&s.ID, &s.StudentIdentifier, &s.FullName, &s.PasswordHash, &s.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
