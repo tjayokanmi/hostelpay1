@@ -11,13 +11,7 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
-
-func generateIdempotencyKey() string {
-	return uuid.NewString()
-}
 
 type Environment string
 
