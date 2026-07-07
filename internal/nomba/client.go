@@ -3,13 +3,21 @@ package nomba
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+func generateIdempotencyKey() string {
+	return uuid.NewString()
+}
 
 type Environment string
 
@@ -38,6 +46,14 @@ type Client struct {
 	mu          sync.Mutex
 	accessToken string
 	tokenExpiry time.Time
+}
+
+func generateIdempotencyKey() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate idempotency key: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func NewClient(env Environment, clientID, clientSecret, parentAccountID, subAccountID string) *Client {
@@ -201,9 +217,15 @@ func (c *Client) GenerateCheckoutLink(ctx context.Context, req CheckoutRequest) 
 		return CheckoutResult{}, fmt.Errorf("failed to create checkout request: %w", err)
 	}
 
+	idempotencyKey, err := generateIdempotencyKey()
+	if err != nil {
+		return CheckoutResult{}, fmt.Errorf("failed to generate idempotency key: %w", err)
+	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("accountId", c.parentAccountID)
+	httpReq.Header.Set("X-Idempotent-key", idempotencyKey)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -323,9 +345,16 @@ func (c *Client) ChargeToken(ctx context.Context, amountNaira, cardToken, custom
 	if err != nil {
 		return ChargeResult{}, fmt.Errorf("failed to create charge request: %w", err)
 	}
+
+	idempotencyKey, err := generateIdempotencyKey()
+	if err != nil {
+		return ChargeResult{}, fmt.Errorf("failed to generate idempotency key: %w", err)
+	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("accountId", c.parentAccountID)
+	req.Header.Set("X-Idempotent-key", idempotencyKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
