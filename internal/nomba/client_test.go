@@ -19,3 +19,10 @@ func TestBuildCheckoutPayloadRequestsTokenization(t *testing.T) {
 		t.Fatal("expected checkout payload to request card tokenization")
 	}
 }
+
+func TestEffectiveAccountIDPrefersSubAccount(t *testing.T) {
+	client := &Client{parentAccountID: "parent-account", subAccountID: "sub-account"}
+	if got := client.effectiveAccountID(); got != "sub-account" {
+		t.Fatalf("expected sub-account ID to be used, got %q", got)
+	}
+}
