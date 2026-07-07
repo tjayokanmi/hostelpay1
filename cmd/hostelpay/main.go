@@ -21,10 +21,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// calculateRentKobo applies the pricing rules entirely in integer kobo
-func calculateRentKobo(occupancyType string) (int64, error) {
-	const baseRateKobo int64 = 3_000_000 // ₦30,000
+func calculateRentKobo(env nomba.Environment, occupancyType string) (int64, error) {
+	if env == nomba.EnvProduction {
+		switch occupancyType {
+		case "single":
+			return 15_000, nil // ₦150
+		case "shared":
+			return 10_000, nil // ₦100
+		default:
+			return 0, fmt.Errorf("invalid occupancy type: %s", occupancyType)
+		}
+	}
 
+	// Sandbox — original rates, safe since no real money moves
+	const baseRateKobo int64 = 3_000_000 // ₦30,000
 	switch occupancyType {
 	case "single":
 		return baseRateKobo, nil
@@ -136,7 +146,7 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, studentRepo *
 		}
 
 		// --- Existing payment logic, unchanged from here ---
-		amountKobo, err := calculateRentKobo(occupancy)
+		amountKobo, err := calculateRentKobo(nombaClient.Environment(), occupancy)
 		if err != nil {
 			log.Printf("pricing error: %v", err)
 			http.Error(w, "Invalid occupancy selection", http.StatusBadRequest)
@@ -460,8 +470,7 @@ func runBillingCycleHandler(subRepo *repository.SubscriptionRepository, nombaCli
 
 		results := []string{}
 		for _, sub := range due {
-			amountKobo, err := calculateRentKobo(sub.OccupancyType)
-			if err != nil {
+			amountKobo, err := calculateRentKobo(nombaClient.Environment(), sub.OccupancyType)			if err != nil {
 				log.Printf("billing cycle pricing error for %s: %v", sub.StudentIdentifier, err)
 				continue
 			}
