@@ -341,13 +341,22 @@ func managerDashboardHandler(repo *repository.PaymentRepository) http.HandlerFun
 			return
 		}
 
+		monthlyRevenue, err := repo.GetMonthlyRevenue(r.Context())
+		if err != nil {
+			log.Printf("monthly revenue query error: %v", err)
+			http.Error(w, "Failed to load dashboard data", http.StatusInternalServerError)
+			return
+		}
+
 		data := struct {
 			Payments       []models.Payment
+			MonthlyRevenue []repository.MonthlyRevenue
 			SelectedBlock  string
 			SelectedFloor  string
 			SelectedStatus string
 		}{
 			Payments:       payments,
+			MonthlyRevenue: monthlyRevenue,
 			SelectedBlock:  blockFilter,
 			SelectedFloor:  floorFilter,
 			SelectedStatus: statusFilter,

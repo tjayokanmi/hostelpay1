@@ -25,7 +25,29 @@
 <body>
     <div class="container">
         <h1>Manager Dashboard</h1>
-
+            <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+            <h2 style="margin-top: 0; font-size: 1.1rem; color: #2c3e50;">Monthly Revenue (Confirmed Payments)</h2>
+            {{if .MonthlyRevenue}}
+                <table style="width: auto; min-width: 300px;">
+                    <thead>
+                        <tr>
+                            <th style="padding: 8px 20px 8px 0;">Month</th>
+                            <th style="padding: 8px 0;">Total Collected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .MonthlyRevenue}}
+                        <tr>
+                            <td style="padding: 6px 20px 6px 0;">{{.Month}}</td>
+                            <td style="padding: 6px 0; font-weight: 600; color: #27ae60;">₦{{.Total}}</td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            {{else}}
+                <p style="color: #7f8c8d; font-style: italic; margin-bottom: 0;">No confirmed payments yet.</p>
+            {{end}}
+        </div>
         <form class="filter-bar" method="GET" action="/manager/dashboard">
             <div class="filter-group">
                 <label for="block">Filter by Block</label>

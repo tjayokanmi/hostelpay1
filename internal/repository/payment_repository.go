@@ -43,8 +43,6 @@ func (r *PaymentRepository) CreatePayment(ctx context.Context, p models.Payment)
 	return nil
 }
 
-// Add this to internal/repository/payment_repository.go
-
 func (r *PaymentRepository) UpdatePaymentStatusByOrderRef(ctx context.Context, orderReference, status, providerReference string) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE payments
@@ -169,4 +167,39 @@ func (r *PaymentRepository) ListPaymentsByStudent(ctx context.Context, identifie
 		return nil, fmt.Errorf("error iterating payment rows: %w", err)
 	}
 	return payments, nil
+}
+
+type MonthlyRevenue struct {
+	Month string
+	Total string
+}
+
+// GetMonthlyRevenue returns total SUCCESS payments grouped by calendar month,
+// most recent first. No new tables needed — aggregates existing payments data.
+func (r *PaymentRepository) GetMonthlyRevenue(ctx context.Context) ([]MonthlyRevenue, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT TO_CHAR(created_at, 'FMMonth YYYY') AS month,
+		       TO_CHAR(SUM(amount_paid), 'FM999,999,990.00') AS total
+		FROM payments
+		WHERE payment_status = 'SUCCESS'
+		GROUP BY DATE_TRUNC('month', created_at), TO_CHAR(created_at, 'FMMonth YYYY')
+		ORDER BY DATE_TRUNC('month', created_at) DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query monthly revenue: %w", err)
+	}
+	defer rows.Close()
+
+	var results []MonthlyRevenue
+	for rows.Next() {
+		var m MonthlyRevenue
+		if err := rows.Scan(&m.Month, &m.Total); err != nil {
+			return nil, fmt.Errorf("failed to scan monthly revenue row: %w", err)
+		}
+		results = append(results, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating monthly revenue rows: %w", err)
+	}
+	return results, nil
 }
