@@ -225,3 +225,158 @@ func (c *Client) GenerateCheckoutLink(ctx context.Context, req CheckoutRequest) 
 		CheckoutLink: checkoutResp.Data.CheckoutLink,
 	}, nil
 }
+
+type TokenListResponse struct {
+	Code string `json:"code"`
+	Data []struct {
+		CardID string `json:"cardId"`
+	} `json:"data"`
+}
+
+// ListTokens returns saved card tokens for a customer.
+func (c *Client) ListTokens(ctx context.Context, customerID string) ([]string, error) {
+	token, err := c.getAccessToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to obtain access token: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/tokenized-card/list?customerId=%s", c.baseURL, customerID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create token list request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("accountId", c.parentAccountID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("nomba token list request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read token list response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("nomba token list returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var listResp TokenListResponse
+	if err := json.Unmarshal(respBody, &listResp); err != nil {
+		return nil, fmt.Errorf("failed to decode token list response: %w", err)
+	}
+
+	var tokens []string
+	for _, t := range listResp.Data {
+		tokens = append(tokens, t.CardID)
+	}
+	return tokens, nil
+}
+
+type chargeRequest struct {
+	Amount        string `json:"amount"`
+	Currency      string `json:"currency"`
+	CardID        string `json:"cardId"`
+	CustomerID    string `json:"customerId"`
+	MerchantTxRef string `json:"merchantTxRef"`
+}
+
+type ChargeResponse struct {
+	Code        string `json:"code"`
+	Description string `json:"description"`
+	Data        struct {
+		TransactionID string `json:"transactionId"`
+		Status        string `json:"status"`
+	} `json:"data"`
+}
+
+type ChargeResult struct {
+	TransactionID string
+	Status        string
+}
+
+// ChargeToken charges a previously saved card token. amountNaira must be a
+// decimal string like "150.00" — same convention as checkout. merchantTxRef
+// must be unique per attempt for idempotency, per Nomba's docs.
+func (c *Client) ChargeToken(ctx context.Context, amountNaira, cardToken, customerID, merchantTxRef string) (ChargeResult, error) {
+	token, err := c.getAccessToken(ctx)
+	if err != nil {
+		return ChargeResult{}, fmt.Errorf("failed to obtain access token: %w", err)
+	}
+
+	payload := chargeRequest{
+		Amount:        amountNaira,
+		Currency:      "NGN",
+		CardID:        cardToken,
+		CustomerID:    customerID,
+		MerchantTxRef: merchantTxRef,
+	}
+
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return ChargeResult{}, fmt.Errorf("failed to marshal charge request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/tokenized-card/charge", bytes.NewReader(payloadBytes))
+	if err != nil {
+		return ChargeResult{}, fmt.Errorf("failed to create charge request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("accountId", c.parentAccountID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return ChargeResult{}, fmt.Errorf("nomba charge request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ChargeResult{}, fmt.Errorf("failed to read charge response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return ChargeResult{}, fmt.Errorf("nomba charge returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var chargeResp ChargeResponse
+	if err := json.Unmarshal(respBody, &chargeResp); err != nil {
+		return ChargeResult{}, fmt.Errorf("failed to decode charge response: %w", err)
+	}
+
+	return ChargeResult{
+		TransactionID: chargeResp.Data.TransactionID,
+		Status:        chargeResp.Data.Status,
+	}, nil
+}
+
+// RevokeToken deletes a stored card token.
+func (c *Client) RevokeToken(ctx context.Context, cardToken string) error {
+	token, err := c.getAccessToken(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to obtain access token: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/tokenized-card/%s", c.baseURL, cardToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create revoke request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("accountId", c.parentAccountID)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("nomba revoke request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("nomba revoke returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}

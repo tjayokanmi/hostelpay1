@@ -390,6 +390,110 @@ func basicAuthMiddleware(next http.HandlerFunc, username, password string) http.
 	}
 }
 
+func subscribeHandler(subRepo *repository.SubscriptionRepository, nombaClient *nomba.Client) func(w http.ResponseWriter, r *http.Request, studentIdentifier string) {
+	return func(w http.ResponseWriter, r *http.Request, studentIdentifier string) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		occupancyType := r.FormValue("occupancy_type")
+		if occupancyType == "" {
+			http.Error(w, "Occupancy type is required", http.StatusBadRequest)
+			return
+		}
+
+		tokens, err := nombaClient.ListTokens(r.Context(), studentIdentifier)
+		if err != nil {
+			log.Printf("token list error for %s: %v", studentIdentifier, err)
+			http.Error(w, "Could not find a saved card. Please complete a payment first.", http.StatusBadRequest)
+			return
+		}
+		if len(tokens) == 0 {
+			http.Error(w, "No saved card found. Please complete a payment first.", http.StatusBadRequest)
+			return
+		}
+
+		nextChargeDate := time.Now().AddDate(0, 1, 0) // one month from now
+		_, err = subRepo.CreateSubscription(r.Context(), studentIdentifier, tokens[0], occupancyType, nextChargeDate)
+		if err != nil {
+			log.Printf("create subscription error: %v", err)
+			http.Error(w, "Failed to enable recurring payments", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("✅ SUBSCRIPTION CREATED | Student: %s | Next charge: %s", studentIdentifier, nextChargeDate.Format("2006-01-02"))
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+	}
+}
+
+func cancelSubscriptionHandler(subRepo *repository.SubscriptionRepository) func(w http.ResponseWriter, r *http.Request, studentIdentifier string) {
+	return func(w http.ResponseWriter, r *http.Request, studentIdentifier string) {
+		sub, err := subRepo.GetActiveSubscriptionByStudent(r.Context(), studentIdentifier)
+		if err != nil {
+			log.Printf("subscription lookup error: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if sub == nil {
+			http.Redirect(w, r, "/account", http.StatusSeeOther)
+			return
+		}
+		if err := subRepo.CancelSubscription(r.Context(), sub.ID); err != nil {
+			log.Printf("cancel subscription error: %v", err)
+			http.Error(w, "Failed to cancel", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("✅ SUBSCRIPTION CANCELLED | Student: %s", studentIdentifier)
+		http.Redirect(w, r, "/account", http.StatusSeeOther)
+	}
+}
+
+func runBillingCycleHandler(subRepo *repository.SubscriptionRepository, nombaClient *nomba.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		due, err := subRepo.ListDueSubscriptions(r.Context())
+		if err != nil {
+			log.Printf("list due subscriptions error: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
+		results := []string{}
+		for _, sub := range due {
+			amountKobo, err := calculateRentKobo(sub.OccupancyType)
+			if err != nil {
+				log.Printf("billing cycle pricing error for %s: %v", sub.StudentIdentifier, err)
+				continue
+			}
+			nairaPart := amountKobo / 100
+			koboPart := amountKobo % 100
+			amountStr := fmt.Sprintf("%d.%02d", nairaPart, koboPart)
+
+			merchantTxRef := fmt.Sprintf("recur_%s_%s", sub.StudentIdentifier, time.Now().Format("200601021504"))
+
+			chargeResult, err := nombaClient.ChargeToken(r.Context(), amountStr, sub.CardToken, sub.StudentIdentifier, merchantTxRef)
+			if err != nil {
+				log.Printf("❌ CHARGE FAILED | Student: %s | Error: %v", sub.StudentIdentifier, err)
+				results = append(results, fmt.Sprintf("FAILED: %s (%v)", sub.StudentIdentifier, err))
+				continue
+			}
+
+			if err := subRepo.AdvanceNextChargeDate(r.Context(), sub.ID, sub.NextChargeDate.AddDate(0, 1, 0)); err != nil {
+				log.Printf("failed to advance charge date for %s: %v", sub.StudentIdentifier, err)
+			}
+
+			log.Printf("✅ RECURRING CHARGE SUCCESS | Student: %s | TxID: %s", sub.StudentIdentifier, chargeResult.TransactionID)
+			results = append(results, fmt.Sprintf("SUCCESS: %s (tx: %s)", sub.StudentIdentifier, chargeResult.TransactionID))
+		}
+
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "Billing cycle complete. Processed %d subscriptions:\n", len(due))
+		for _, r := range results {
+			fmt.Fprintf(w, "- %s\n", r)
+		}
+	}
+}
+
 func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -449,6 +553,14 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	subRepo := repository.NewSubscriptionRepository(dbPool)
+
+	mux.HandleFunc("POST /account/subscribe", requireAuth(subscribeHandler(subRepo, nombaClient), studentRepo))
+	mux.HandleFunc("POST /account/subscribe/cancel", requireAuth(cancelSubscriptionHandler(subRepo), studentRepo))
+
+	// Manual billing trigger, stands in for a scheduler. Protect with the same
+	// manager basic-auth middleware you already have.
+	mux.HandleFunc("POST /admin/run-billing-cycle", basicAuthMiddleware(runBillingCycleHandler(subRepo, nombaClient), os.Getenv("MANAGER_USERNAME"), os.Getenv("MANAGER_PASSWORD")))
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
