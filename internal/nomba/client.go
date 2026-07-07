@@ -153,16 +153,18 @@ type CheckoutRequest struct {
 	CustomerEmail  string
 	AmountNaira    string
 	CallbackURL    string
+	TokenizeCard   bool
 }
 
 type nombaOrder struct {
-	CallbackURL    string `json:"callbackUrl"`
-	CustomerEmail  string `json:"customerEmail"`
-	Amount         string `json:"amount"`
-	Currency       string `json:"currency"`
-	OrderReference string `json:"orderReference"`
-	CustomerID     string `json:"customerId"`
-	AccountID      string `json:"accountId"`
+	CallbackURL            string `json:"callbackUrl"`
+	CustomerEmail          string `json:"customerEmail"`
+	Amount                 string `json:"amount"`
+	Currency               string `json:"currency"`
+	OrderReference         string `json:"orderReference"`
+	CustomerID             string `json:"customerId"`
+	AccountID              string `json:"accountId"`
+	IsTokenizedCardPayment bool   `json:"isTokenizedCardPayment"`
 }
 
 type nombaCheckoutPayload struct {
@@ -183,22 +185,32 @@ type CheckoutResult struct {
 	ProviderReference string
 }
 
+func buildCheckoutPayload(req CheckoutRequest, subAccountID string) (nombaCheckoutPayload, error) {
+	payload := nombaCheckoutPayload{
+		Order: nombaOrder{
+			CallbackURL:            req.CallbackURL,
+			CustomerEmail:          req.CustomerEmail,
+			Amount:                 req.AmountNaira,
+			Currency:               "NGN",
+			OrderReference:         req.OrderReference,
+			CustomerID:             req.CustomerID,
+			AccountID:              subAccountID,
+			IsTokenizedCardPayment: req.TokenizeCard,
+		},
+	}
+
+	return payload, nil
+}
+
 func (c *Client) GenerateCheckoutLink(ctx context.Context, req CheckoutRequest) (CheckoutResult, error) {
 	token, err := c.getAccessToken(ctx)
 	if err != nil {
 		return CheckoutResult{}, fmt.Errorf("failed to obtain access token: %w", err)
 	}
 
-	payload := nombaCheckoutPayload{
-		Order: nombaOrder{
-			CallbackURL:    req.CallbackURL,
-			CustomerEmail:  req.CustomerEmail,
-			Amount:         req.AmountNaira,
-			Currency:       "NGN",
-			OrderReference: req.OrderReference,
-			CustomerID:     req.CustomerID,
-			AccountID:      c.subAccountID,
-		},
+	payload, err := buildCheckoutPayload(req, c.subAccountID)
+	if err != nil {
+		return CheckoutResult{}, err
 	}
 
 	payloadBytes, err := json.Marshal(payload)

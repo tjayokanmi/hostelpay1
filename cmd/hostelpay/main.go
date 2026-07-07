@@ -187,6 +187,7 @@ func checkoutInitializeHandler(repo *repository.PaymentRepository, studentRepo *
 			CustomerEmail:  "student@hackathon.com",
 			AmountNaira:    payment.AmountPaid,
 			CallbackURL:    "https://hostelpay1.onrender.com/checkout/callback",
+			TokenizeCard:   true,
 		}
 
 		result, err := nombaClient.GenerateCheckoutLink(r.Context(), req)
@@ -272,8 +273,11 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 		}
 		log.Printf("--- RAW WEBHOOK BODY ---")
 		log.Printf("%s", string(body))
-		receivedSignature := r.Header.Get("nomba-signature")
-		timestamp := r.Header.Get("nomba-timestamp")
+		receivedSignature := r.Header.Get("Nomba-Signature")
+		if receivedSignature == "" {
+			receivedSignature = r.Header.Get("Nomba-Sig-Value")
+		}
+		timestamp := r.Header.Get("Nomba-Timestamp")
 
 		payload, err := nomba.ParseWebhookPayload(body)
 		if err != nil {
@@ -282,7 +286,7 @@ func checkoutWebhookHandler(repo *repository.PaymentRepository, signingKey strin
 			return
 		}
 
-		if !nomba.VerifySignature(payload, timestamp, receivedSignature, signingKey) {
+		if !nomba.VerifySignatureWithBody(payload, body, timestamp, receivedSignature, signingKey) {
 			log.Printf("⚠️ webhook signature verification FAILED")
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
