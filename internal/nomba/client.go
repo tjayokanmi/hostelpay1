@@ -62,13 +62,6 @@ func NewClient(env Environment, clientID, clientSecret, parentAccountID, subAcco
 	}
 }
 
-func (c *Client) effectiveAccountID() string {
-	if c.subAccountID != "" {
-		return c.subAccountID
-	}
-	return c.parentAccountID
-}
-
 // Environment exposes which mode this client is running in, so callers
 // (e.g. pricing logic) can branch on it without duplicating the concept.
 func (c *Client) Environment() Environment {
@@ -115,7 +108,7 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to create token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("accountId", c.effectiveAccountID())
+	req.Header.Set("accountId", c.parentAccountID)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -164,14 +157,13 @@ type CheckoutRequest struct {
 }
 
 type nombaOrder struct {
-	CallbackURL            string `json:"callbackUrl"`
-	CustomerEmail          string `json:"customerEmail"`
-	Amount                 string `json:"amount"`
-	Currency               string `json:"currency"`
-	OrderReference         string `json:"orderReference"`
-	CustomerID             string `json:"customerId"`
-	AccountID              string `json:"accountId"`
-	IsTokenizedCardPayment bool   `json:"isTokenizedCardPayment"`
+	CallbackURL    string `json:"callbackUrl"`
+	CustomerEmail  string `json:"customerEmail"`
+	Amount         string `json:"amount"`
+	Currency       string `json:"currency"`
+	OrderReference string `json:"orderReference"`
+	CustomerID     string `json:"customerId"`
+	AccountID      string `json:"accountId"`
 }
 
 type nombaCheckoutPayload struct {
@@ -196,14 +188,13 @@ type CheckoutResult struct {
 func buildCheckoutPayload(req CheckoutRequest, subAccountID string) (nombaCheckoutPayload, error) {
 	payload := nombaCheckoutPayload{
 		Order: nombaOrder{
-			CallbackURL:            req.CallbackURL,
-			CustomerEmail:          req.CustomerEmail,
-			Amount:                 req.AmountNaira,
-			Currency:               "NGN",
-			OrderReference:         req.OrderReference,
-			CustomerID:             req.CustomerID,
-			AccountID:              subAccountID,
-			IsTokenizedCardPayment: req.TokenizeCard,
+			CallbackURL:    req.CallbackURL,
+			CustomerEmail:  req.CustomerEmail,
+			Amount:         req.AmountNaira,
+			Currency:       "NGN",
+			OrderReference: req.OrderReference,
+			CustomerID:     req.CustomerID,
+			AccountID:      subAccountID,
 		},
 		TokenizeCard: req.TokenizeCard,
 	}
@@ -239,7 +230,7 @@ func (c *Client) GenerateCheckoutLink(ctx context.Context, req CheckoutRequest) 
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("accountId", c.effectiveAccountID())
+	httpReq.Header.Set("accountId", c.parentAccountID)
 	httpReq.Header.Set("X-Idempotent-key", idempotencyKey)
 
 	resp, err := c.httpClient.Do(httpReq)
@@ -283,7 +274,7 @@ func (c *Client) ListTokens(ctx context.Context, customerID string) ([]string, e
 		return nil, fmt.Errorf("failed to create token list request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("accountId", c.effectiveAccountID())
+	req.Header.Set("accountId", c.parentAccountID)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -374,7 +365,7 @@ func (c *Client) ChargeToken(ctx context.Context, amountNaira, cardToken, custom
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("accountId", c.effectiveAccountID())
+	req.Header.Set("accountId", c.parentAccountID)
 	req.Header.Set("X-Idempotent-key", idempotencyKey)
 
 	resp, err := c.httpClient.Do(req)
@@ -416,7 +407,7 @@ func (c *Client) RevokeToken(ctx context.Context, cardToken string) error {
 		return fmt.Errorf("failed to create revoke request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("accountId", c.effectiveAccountID())
+	req.Header.Set("accountId", c.parentAccountID)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
