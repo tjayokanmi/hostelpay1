@@ -426,6 +426,18 @@ func subscribeHandler(subRepo *repository.SubscriptionRepository, nombaClient *n
 			return
 		}
 
+		existing, err := subRepo.GetActiveSubscriptionByStudent(r.Context(), studentIdentifier)
+		if err != nil {
+			log.Printf("subscription lookup error: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if existing != nil {
+			log.Printf("subscription already active for %s — skipping duplicate creation", studentIdentifier)
+			http.Redirect(w, r, "/account?subscribed=already", http.StatusSeeOther)
+			return
+		}
+
 		tokens, err := nombaClient.ListTokens(r.Context(), studentIdentifier)
 		if err != nil {
 			log.Printf("token list error for %s: %v", studentIdentifier, err)
@@ -437,7 +449,7 @@ func subscribeHandler(subRepo *repository.SubscriptionRepository, nombaClient *n
 			return
 		}
 
-		nextChargeDate := time.Now().AddDate(0, 1, 0) // one month from now
+		nextChargeDate := time.Now().AddDate(0, 1, 0)
 		_, err = subRepo.CreateSubscription(r.Context(), studentIdentifier, tokens[0], occupancyType, nextChargeDate)
 		if err != nil {
 			log.Printf("create subscription error: %v", err)
@@ -446,7 +458,7 @@ func subscribeHandler(subRepo *repository.SubscriptionRepository, nombaClient *n
 		}
 
 		log.Printf("✅ SUBSCRIPTION CREATED | Student: %s | Next charge: %s", studentIdentifier, nextChargeDate.Format("2006-01-02"))
-		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		http.Redirect(w, r, "/account?subscribed=1", http.StatusSeeOther)
 	}
 }
 
@@ -468,7 +480,7 @@ func cancelSubscriptionHandler(subRepo *repository.SubscriptionRepository) func(
 			return
 		}
 		log.Printf("✅ SUBSCRIPTION CANCELLED | Student: %s", studentIdentifier)
-		http.Redirect(w, r, "/account", http.StatusSeeOther)
+		http.Redirect(w, r, "/account?subscribed=cancelled", http.StatusSeeOther)
 	}
 }
 

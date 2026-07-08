@@ -12,6 +12,19 @@
                 <h1 class="text-2xl font-bold text-slate-900">My Transactions</h1>
                 <p class="text-sm text-slate-500">{{.StudentIdentifier}}</p>
             </div>
+            {{if eq .SubscribedStatus "1"}}
+    <div style="background: #d4edda; color: #155724; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;">
+        ✅ Monthly auto-pay enabled! Your card will be charged automatically each month.
+    </div>
+{{else if eq .SubscribedStatus "already"}}
+    <div style="background: #fff3cd; color: #856404; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;">
+        You already have auto-pay enabled — no changes made.
+    </div>
+{{else if eq .SubscribedStatus "cancelled"}}
+    <div style="background: #f8d7da; color: #721c24; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;">
+        Auto-pay has been cancelled.
+    </div>
+{{end}}
             <form action="/logout" method="POST">
                 <button type="submit" class="text-sm text-slate-500 hover:text-slate-700">Log out</button>
             </form>

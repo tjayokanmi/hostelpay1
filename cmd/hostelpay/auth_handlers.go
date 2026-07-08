@@ -147,12 +147,16 @@ func accountDashboardHandler(paymentRepo *repository.PaymentRepository, tmpl *te
 			return
 		}
 
+		subscribedStatus := r.URL.Query().Get("subscribed")
+
 		data := struct {
 			StudentIdentifier string
 			Payments          []models.Payment
+			SubscribedStatus  string
 		}{
 			StudentIdentifier: studentIdentifier,
 			Payments:          payments,
+			SubscribedStatus:  subscribedStatus,
 		}
 
 		var buf bytes.Buffer
